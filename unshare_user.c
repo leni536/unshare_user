@@ -18,6 +18,42 @@
 #include <unistd.h>
 #include <errno.h>
 
+static int
+childFunc(void * arg_uid, void * arg_gid)
+{
+	int ret;
+	uid_t * uid=arg_uid;
+	gid_t * gid=arg_gid;
+	FILE  * f;
+	//mount proc to standard location
+	ret=mount("proc","/proc","proc",0,0);
+	if (ret==-1) printf("mount: %d",errno);
+
+
+	f=fopen("/proc/1/uid_map","w");
+	if (f==NULL) printf("Error opening uid_map");
+	ret=fprintf(f,"%d %d 1",*uid);
+	//TODO ret not handled
+	fclose(f);
+	f=fopen("/proc/1/gid_map","w");
+	if (f==NULL) printf("Error opening gid_map");
+	ret=fprintf(f,"%d %d 1",*gid);
+	//TODO
+	fclose(f);
+
+
+	//execute our executable
+	ret=execlp("bash","bash",0,0);
+	if (ret==-1)
+	{
+		printf("exec: %d\n",errno);
+	}
+}
+
+#define STACK_SIZE (1024 * 1024)
+
+static char child_stack[STACK_SIZE];    /* Space for child's stack */
+
 int
 main(int argc, char *argv[])
 {
@@ -31,7 +67,8 @@ main(int argc, char *argv[])
 	// Call unshare for new user namespace
 	int ret;
 	ret=unshare(//flags
-			CLONE_NEWUSER
+			CLONE_NEWUSER	|
+			CLONE_NEWNS
 		   );
 	if (ret==-1)
 	{
@@ -63,14 +100,19 @@ main(int argc, char *argv[])
 	if (f==NULL) printf("Error opening gid_map");
 	ret=fprintf(f,"0 %d 1",gid);
 	//TODO
-	//execute our executable
-	ret=execl("/bin/bash","bash",0,0);
-	if (ret==-1)
-	{
-		printf("exec: %d\n",errno);
-	}
+	fclose(f);
 
+	//clone for new pid namespace
+	pid_t chd_pid;
+	chd_pid=clone(childFunc,child_stack+STACK_SIZE,
+			CLONE_NEWPID	|
+			CLONE_NEWUSER	|
+			SIGCHLD
+			,&uid,&gid,0,0);
+	if (chd_pid==-1) printf("clone: %d", errno);
 
-
+	if (waitpid(chd_pid, NULL, 0) == -1)      /* Wait for child */
+	    printf("waitpid");
+	
 	exit(EXIT_SUCCESS);
 }
